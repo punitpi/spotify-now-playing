@@ -1,8 +1,8 @@
-# spotify-now-playing — Cloudflare Worker
+# spotify-now-playing
 
-A lightweight Cloudflare Worker that proxies the Spotify "Currently Playing" API. Used by [typedbyme.puneeth.io](https://typedbyme.puneeth.io/) to show a live "Now Playing" bar at the top of the page.
+A lightweight service that proxies the Spotify "Currently Playing" API. Drop it anywhere — Cloudflare Workers, a Node.js server, Docker, Vercel, or any other platform — to expose a simple JSON endpoint your site can poll.
 
-Returns a simple JSON response:
+## Response format
 
 ```json
 { "isPlaying": true, "track": "Black Hole Sun", "artist": "Soundgarden", "url": "https://open.spotify.com/track/...", "albumArt": "https://...", "album": "Superunknown" }
@@ -14,19 +14,11 @@ Or `{ "isPlaying": false }` when nothing is playing or on any error.
 
 ## How it works
 
-1. The Hugo site's client-side JavaScript calls this Worker every 30 seconds
-2. The Worker refreshes a Spotify OAuth access token using a stored refresh token
+1. Your site's client-side JavaScript calls this service (e.g. every 30 seconds)
+2. The service refreshes a Spotify OAuth access token using a stored refresh token
 3. Calls `GET /v1/me/player/currently-playing` on the Spotify API
-4. Returns normalized JSON with CORS headers locked to the site origin
-5. Cloudflare caches the response for 30 seconds to avoid Spotify rate limits
-
----
-
-## Prerequisites
-
-- [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works fine)
-- [Node.js](https://nodejs.org/) v18+
-- A [Spotify account](https://spotify.com)
+4. Returns normalized JSON with CORS headers
+5. On Cloudflare Workers, responses are cached for 30 seconds to avoid rate limits
 
 ---
 
@@ -36,7 +28,6 @@ Or `{ "isPlaying": false }` when nothing is playing or on any error.
 2. Click **Create app**
 3. Fill in:
    - **App name**: `now-playing` (or anything you like)
-   - **App description**: anything
    - **Redirect URIs**: `http://localhost:8888/callback`
    - **APIs used**: check **Web API**
 4. Click **Save**
@@ -67,8 +58,6 @@ Copy that `code` value.
 
 ### 2b. Exchange the code for tokens
 
-Run this `curl` command (replace the placeholders):
-
 ```bash
 curl -X POST https://accounts.spotify.com/api/token \
   -H "Content-Type: application/x-www-form-urlencoded" \
@@ -76,58 +65,59 @@ curl -X POST https://accounts.spotify.com/api/token \
   -d "grant_type=authorization_code&code=YOUR_CODE&redirect_uri=http://localhost:8888/callback"
 ```
 
-The response will look like:
-
-```json
-{
-  "access_token": "BQ...",
-  "token_type": "Bearer",
-  "expires_in": 3600,
-  "refresh_token": "AQ...",
-  "scope": "user-read-currently-playing"
-}
-```
-
-Save the `refresh_token` — you'll store this as a Worker secret.
+From the response, save the `refresh_token` — you'll need it in the next step.
 
 ---
 
-## Step 3: Install Wrangler and dependencies
+## Step 3: Configure environment variables
+
+Three variables are required regardless of where you deploy:
+
+| Variable | Description |
+|---|---|
+| `SPOTIFY_CLIENT_ID` | From your Spotify Developer App |
+| `SPOTIFY_CLIENT_SECRET` | From your Spotify Developer App |
+| `SPOTIFY_REFRESH_TOKEN` | From Step 2 above |
+
+One optional variable:
+
+| Variable | Description | Default |
+|---|---|---|
+| `CORS_ORIGIN` | Allowed origin for CORS (e.g. `https://your-site.com`) | `*` (all origins) |
+
+Copy `.env.example` to `.env` for local runs:
 
 ```bash
-cd workers/spotify-now-playing
-npm install
+cp .env.example .env
+# fill in your values
 ```
 
-Log in to Cloudflare:
+---
+
+## Deployment
+
+### Option A — Cloudflare Workers
+
+Requires [Node.js](https://nodejs.org/) v18+ and a [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works fine).
 
 ```bash
+npm install
 npx wrangler login
 ```
 
----
-
-## Step 4: Set secrets
-
-Store your Spotify credentials as Worker secrets (encrypted at rest, never in code):
+Store secrets (encrypted, never in code):
 
 ```bash
 npx wrangler secret put SPOTIFY_CLIENT_ID
-# paste your client ID when prompted
-
 npx wrangler secret put SPOTIFY_CLIENT_SECRET
-# paste your client secret when prompted
-
 npx wrangler secret put SPOTIFY_REFRESH_TOKEN
-# paste your refresh token when prompted
+npx wrangler secret put CORS_ORIGIN   # optional
 ```
 
----
-
-## Step 5: Deploy
+Deploy:
 
 ```bash
-npm run deploy
+npm run deploy:cf
 ```
 
 Wrangler will output your Worker URL:
@@ -135,17 +125,93 @@ Wrangler will output your Worker URL:
 https://spotify-now-playing.<your-subdomain>.workers.dev
 ```
 
----
-
-## Step 6: Test it
-
-While playing something on Spotify:
+Local development against real secrets:
 
 ```bash
-curl https://spotify-now-playing.<your-subdomain>.workers.dev
+npm run dev:cf
+# available at http://localhost:8787
 ```
 
-Expected response:
+---
+
+### Option B — Node.js server
+
+Requires Node.js v18+.
+
+```bash
+npm install
+cp .env.example .env   # fill in your values
+npm start
+# listening on http://localhost:3000
+```
+
+Watch mode for development:
+
+```bash
+npm run dev
+```
+
+Set `PORT` in `.env` or your environment to change the port.
+
+---
+
+### Option C — Docker
+
+```bash
+docker build -t spotify-now-playing .
+docker run -p 3000:3000 \
+  -e SPOTIFY_CLIENT_ID=your_id \
+  -e SPOTIFY_CLIENT_SECRET=your_secret \
+  -e SPOTIFY_REFRESH_TOKEN=your_token \
+  -e CORS_ORIGIN=https://your-site.com \
+  spotify-now-playing
+```
+
+Or with a `.env` file:
+
+```bash
+docker run -p 3000:3000 --env-file .env spotify-now-playing
+```
+
+---
+
+### Option D — Vercel
+
+1. Push this repo to GitHub
+2. Import it in the [Vercel dashboard](https://vercel.com/new)
+3. Add the four environment variables in **Settings → Environment Variables**
+4. Deploy — Vercel will use the `start` script automatically
+
+For Edge Functions / serverless, export `src/index.js` as a Vercel Edge Function by creating `api/index.js`:
+
+```js
+export { default } from "../src/index.js";
+export const config = { runtime: "edge" };
+```
+
+---
+
+### Option E — Any platform supporting Node.js
+
+Set the required environment variables and run:
+
+```bash
+npm start
+```
+
+The service listens on `PORT` (default `3000`).
+
+---
+
+## Testing
+
+While playing something on Spotify, hit your endpoint:
+
+```bash
+curl http://localhost:3000
+```
+
+Expected:
 ```json
 { "isPlaying": true, "track": "Black Hole Sun", "artist": "Soundgarden", "url": "https://open.spotify.com/track/5ZCfVRqMsv3AQ0vF5bRrmF", "albumArt": "https://i.scdn.co/image/...", "album": "Superunknown" }
 ```
@@ -157,46 +223,25 @@ When nothing is playing:
 
 ---
 
-## Step 7: Connect to the Hugo site
+## Connect to your site
 
-Update `hugo.yml` in the main site repo:
+Point your site's config at the deployed URL. For example in a Hugo `hugo.yml`:
 
 ```yaml
 params:
-  spotifyWorkerUrl: "https://spotify-now-playing.<your-subdomain>.workers.dev"
+  spotifyNowPlayingUrl: "https://your-deployed-url"
 ```
 
-Commit and push. The site will pick up the URL at build time and the "Now Playing" bar will activate.
+Then poll it from client-side JavaScript every 30 seconds.
 
 ---
 
-## Local development
+## CORS
 
-Run the Worker locally (against real Spotify secrets):
+`CORS_ORIGIN` controls which origins can call the endpoint. Set it to your site's origin to lock it down:
 
-```bash
-npm run dev
-# Worker available at http://localhost:8787
+```
+CORS_ORIGIN=https://your-site.com
 ```
 
-Note: `wrangler dev` uses a remote preview environment that has access to your secrets. Local-only mode won't have secrets available.
-
----
-
-## CORS note
-
-The Worker only allows requests from `https://typedbyme.puneeth.io`. If you fork this for your own site, update `ALLOWED_ORIGIN` in `src/index.js` before deploying.
-
----
-
-## Moving to a standalone repo
-
-This Worker lives in the `typedbyme` repo for now. To extract it:
-
-1. Create a new GitHub repo (e.g., `spotify-now-playing-worker`)
-2. Copy the `workers/spotify-now-playing/` contents into the new repo root
-3. Re-run `wrangler secret put` for each secret in the new project
-4. Deploy from the new repo
-5. Delete `workers/` from the `typedbyme` repo
-
-The Worker URL stays the same after extraction.
+Leave it unset to allow all origins (`*`), which is fine for private deploys.

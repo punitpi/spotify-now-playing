@@ -2,15 +2,16 @@ const SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token";
 const SPOTIFY_NOW_PLAYING_URL =
   "https://api.spotify.com/v1/me/player/currently-playing";
 const CACHE_TTL_SECONDS = 30;
-const ALLOWED_ORIGIN = "https://typedbyme.puneeth.io";
 
-const corsHeaders = {
-  "Access-Control-Allow-Origin": ALLOWED_ORIGIN,
-  "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+function getCorsHeaders(env) {
+  return {
+    "Access-Control-Allow-Origin": env?.CORS_ORIGIN || "*",
+    "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+}
 
-function jsonResponse(data, status = 200) {
+function jsonResponse(data, corsHeaders, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
@@ -75,6 +76,8 @@ async function getNowPlaying(accessToken) {
 
 export default {
   async fetch(request, env, ctx) {
+    const corsHeaders = getCorsHeaders(env);
+
     // Handle CORS preflight
     if (request.method === "OPTIONS") {
       return new Response(null, { headers: corsHeaders });
@@ -84,26 +87,30 @@ export default {
       return new Response("Method not allowed", { status: 405, headers: corsHeaders });
     }
 
-    // Check Cloudflare cache first
-    const cache = caches.default;
-    const cacheKey = new Request(request.url, request);
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      return cached;
+    // Use Cloudflare cache if available; skip silently on other runtimes
+    let cache, cacheKey;
+    try {
+      cache = caches.default;
+      cacheKey = new Request(request.url, request);
+      const cached = await cache.match(cacheKey);
+      if (cached) return cached;
+    } catch {
+      // caches API not available in this environment
     }
 
     try {
       const accessToken = await getAccessToken(env);
       const nowPlaying = await getNowPlaying(accessToken);
-      const response = jsonResponse(nowPlaying);
+      const response = jsonResponse(nowPlaying, corsHeaders);
 
-      // Store in Cloudflare cache
-      ctx.waitUntil(cache.put(cacheKey, response.clone()));
+      if (cache && cacheKey && ctx?.waitUntil) {
+        ctx.waitUntil(cache.put(cacheKey, response.clone()));
+      }
       return response;
     } catch (err) {
       // Fail silently: return isPlaying: false so the bar just hides
-      console.error("Spotify Worker error:", err.message);
-      return jsonResponse({ isPlaying: false });
+      console.error("spotify-now-playing error:", err.message);
+      return jsonResponse({ isPlaying: false }, corsHeaders);
     }
   },
 };
