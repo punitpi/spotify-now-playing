@@ -100,21 +100,39 @@ cp .env.example .env
 
 Requires [Node.js](https://nodejs.org/) v18+ and a [Cloudflare account](https://dash.cloudflare.com/sign-up) (free tier works fine).
 
+#### A1. Install and log in
+
 ```bash
 npm install
 npx wrangler login
+# opens a browser to authenticate with your Cloudflare account
 ```
 
-Store secrets (encrypted, never in code):
+#### A2. Store Spotify secrets
+
+Wrangler stores secrets encrypted in Cloudflare — they are never in your code or `.env`. You only need to do this once (or when rotating credentials).
 
 ```bash
 npx wrangler secret put SPOTIFY_CLIENT_ID
+# paste your client ID when prompted
+
 npx wrangler secret put SPOTIFY_CLIENT_SECRET
+# paste your client secret when prompted
+
 npx wrangler secret put SPOTIFY_REFRESH_TOKEN
-npx wrangler secret put CORS_ORIGIN   # optional
+# paste your refresh token when prompted
+
+npx wrangler secret put CORS_ORIGIN
+# optional — paste your site origin, e.g. https://your-site.com
 ```
 
-Deploy:
+To verify the secrets are set:
+
+```bash
+npx wrangler secret list
+```
+
+#### A3. Deploy manually
 
 ```bash
 npm run deploy:cf
@@ -125,12 +143,31 @@ Wrangler will output your Worker URL:
 https://spotify-now-playing.<your-subdomain>.workers.dev
 ```
 
-Local development against real secrets:
+#### A4. Deploy automatically via GitHub Actions
+
+The repo includes a workflow at `.github/workflows/deploy-cloudflare.yml` that deploys on every push to `main` (and can also be triggered manually from the Actions tab).
+
+You need two GitHub repository secrets — add them at **Settings → Secrets and variables → Actions → New repository secret**:
+
+| Secret | Where to get it |
+|---|---|
+| `CLOUDFLARE_API_TOKEN` | Cloudflare dashboard → **My Profile → API Tokens → Create Token** — use the **Edit Cloudflare Workers** template |
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare dashboard → right sidebar on the Workers & Pages overview page |
+
+Once the secrets are set, push to `main` and the workflow deploys automatically. You can also trigger it manually from **Actions → Deploy to Cloudflare Workers → Run workflow**.
+
+> The Spotify secrets (`SPOTIFY_CLIENT_ID`, etc.) are stored directly in Cloudflare via `wrangler secret put` (Step A2) and do not need to be added to GitHub — Wrangler reads them from Cloudflare at deploy time.
+
+#### A5. Local development
+
+Run the Worker locally against your real Cloudflare secrets:
 
 ```bash
 npm run dev:cf
 # available at http://localhost:8787
 ```
+
+> `wrangler dev` uses a remote preview environment that has access to your Worker's secrets. Fully local mode won't have them.
 
 ---
 
