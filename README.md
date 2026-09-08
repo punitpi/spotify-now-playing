@@ -35,9 +35,9 @@ Or `{ "isPlaying": false }` when nothing is playing or on any error.
 
 ---
 
-## Step 2: Get your Refresh Token (one-time OAuth flow)
+## Step 2: Get your Refresh Token
 
-You only need to do this once. The refresh token doesn't expire unless you revoke it.
+> **Refresh tokens now expire after 6 months.** As of Spotify's [June 2026 policy change](https://developer.spotify.com/blog/2026-06-18-refresh-token-expiration), refresh tokens issued via this flow expire 6 months after you authorize — not reset by ongoing use — and Spotify enforces this on existing apps as of 2026-07-20. When it expires, the token endpoint returns `400 invalid_grant` and this service silently falls back to `{isPlaying: false}` until you redo this step. See [Re-authorizing](#re-authorizing-every-6-months) below for the recurring procedure, and [Monitoring token expiration](#monitoring-token-expiration) for how this repo reminds you before it lapses.
 
 ### 2a. Authorize your account
 
@@ -71,13 +71,14 @@ From the response, save the `refresh_token` — you'll need it in the next step.
 
 ## Step 3: Configure environment variables
 
-Three variables are required regardless of where you deploy:
+Four variables are required regardless of where you deploy:
 
 | Variable | Description |
 |---|---|
 | `SPOTIFY_CLIENT_ID` | From your Spotify Developer App |
 | `SPOTIFY_CLIENT_SECRET` | From your Spotify Developer App |
 | `SPOTIFY_REFRESH_TOKEN` | From Step 2 above |
+| `SPOTIFY_AUTHORIZED_AT` | Today's date (`YYYY-MM-DD`) — the date you obtained the refresh token above. Used to compute the 6-month expiration for the `/health` check. |
 
 One optional variable:
 
@@ -131,6 +132,8 @@ To verify the secrets are set:
 ```bash
 npx wrangler secret list
 ```
+
+`SPOTIFY_AUTHORIZED_AT` is **not** a secret — it's set as a plain variable directly in `wrangler.toml` under `[vars]`, since it's just a date. Edit it in the repo and redeploy whenever you re-authorize (see [Re-authorizing](#re-authorizing-every-6-months) below).
 
 #### A3. Deploy manually
 
@@ -200,6 +203,7 @@ docker run -p 3000:3000 \
   -e SPOTIFY_CLIENT_ID=your_id \
   -e SPOTIFY_CLIENT_SECRET=your_secret \
   -e SPOTIFY_REFRESH_TOKEN=your_token \
+  -e SPOTIFY_AUTHORIZED_AT=2026-09-08 \
   -e CORS_ORIGIN=https://your-site.com \
   spotify-now-playing
 ```
@@ -216,7 +220,7 @@ docker run -p 3000:3000 --env-file .env spotify-now-playing
 
 1. Push this repo to GitHub
 2. Import it in the [Vercel dashboard](https://vercel.com/new)
-3. Add the four environment variables in **Settings → Environment Variables**
+3. Add the required environment variables (Step 3 above) in **Settings → Environment Variables**
 4. Deploy — Vercel will use the `start` script automatically
 
 For Edge Functions / serverless, export `src/index.js` as a Vercel Edge Function by creating `api/index.js`:
@@ -237,6 +241,48 @@ npm start
 ```
 
 The service listens on `PORT` (default `3000`).
+
+---
+
+## Re-authorizing (every ~6 months)
+
+Spotify refresh tokens expire 6 months after the authorization moment (not reset by ongoing use). Since this app doesn't run any user-facing login flow of its own, re-authorization is a manual, ~5 minute procedure you repeat periodically:
+
+1. **Redo Step 2 above** (Authorize your account → exchange the code for tokens) to get a brand-new `refresh_token`. The `redirect_uri` in both the authorize URL and the token exchange **must exactly match what's registered** in the Spotify Developer Dashboard for this app (Settings → Redirect URIs) — using a different value (even a reasonable-looking one) gets rejected with `INVALID_CLIENT: Invalid redirect URI`. Check the dashboard if you're not sure what's currently registered.
+2. **Update the Cloudflare secret**:
+   ```bash
+   npx wrangler secret put SPOTIFY_REFRESH_TOKEN
+   # paste the new refresh token when prompted
+   ```
+   (For Node/Docker/Vercel deployments, update `SPOTIFY_REFRESH_TOKEN` in `.env` or your host's environment variables instead.)
+3. **Update `SPOTIFY_AUTHORIZED_AT`** in `wrangler.toml` (`[vars]` section) to today's date — this resets the 6-month countdown used by the `/health` check.
+4. **Redeploy**:
+   ```bash
+   npm run deploy:cf
+   ```
+5. **Verify**: hit `/health` on your deployed URL and confirm `"status": "ok"` with a fresh `daysRemaining` (~180).
+
+You'll get a reminder before this is due — see below.
+
+---
+
+## Monitoring token expiration
+
+This service exposes a `/health` endpoint that reports the refresh token's status:
+
+```bash
+curl https://your-deployed-url/health
+```
+
+```json
+{ "status": "ok", "tokenValid": true, "daysRemaining": 172, "authorizedAt": "2026-09-08", "expiresAt": "2027-03-07" }
+```
+
+- `status` is one of `"ok"`, `"expiring_soon"` (within 14 days of the 6-month mark), `"expired"` (Spotify returned `invalid_grant`), or `"error"` (some other failure).
+- The endpoint actually attempts a token refresh against Spotify, so it reflects ground truth, not just the calendar.
+- HTTP status is `200` when `"ok"`, otherwise `503`.
+
+A scheduled GitHub Actions workflow (`.github/workflows/check-spotify-token.yml`) polls this endpoint every **Friday** and, if the status isn't `"ok"`, automatically opens a GitHub Issue in this repo (and fails the workflow run, so you also get GitHub's default failed-workflow email) so re-authorization doesn't get forgotten. It won't file duplicate issues while one is already open.
 
 ---
 

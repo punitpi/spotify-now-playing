@@ -1,0 +1,77 @@
+name: Check Spotify Token Health
+
+on:
+  schedule:
+    # Every Friday at 13:00 UTC (~9am ET)
+    - cron: "0 13 * * 5"
+  workflow_dispatch:  # allow manual trigger from GitHub Actions UI
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  check:
+    name: Check refresh token health
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Query /health endpoint
+        id: health
+        run: |
+          response=$(curl -s -w "\n%{http_code}" https://spotify.api.puneeth.io/health)
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+
+          echo "HTTP status: $http_code"
+          echo "Body: $body"
+
+          echo "http_code=$http_code" >> "$GITHUB_OUTPUT"
+          {
+            echo "body<<HEALTH_BODY_EOF"
+            echo "$body"
+            echo "HEALTH_BODY_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          status=$(echo "$body" | jq -r '.status // "unknown"')
+          days_remaining=$(echo "$body" | jq -r '.daysRemaining // "unknown"')
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+          echo "days_remaining=$days_remaining" >> "$GITHUB_OUTPUT"
+
+      - name: Open issue if token is expiring or expired
+        if: steps.health.outputs.status != 'ok'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STATUS: ${{ steps.health.outputs.status }}
+          DAYS_REMAINING: ${{ steps.health.outputs.days_remaining }}
+          BODY: ${{ steps.health.outputs.body }}
+        run: |
+          if [ "$STATUS" = "expired" ]; then
+            title="Spotify refresh token has expired"
+          elif [ "$STATUS" = "expiring_soon" ]; then
+            title="Spotify refresh token expiring soon ($DAYS_REMAINING days left)"
+          else
+            title="Spotify token health check failed (status: $STATUS)"
+          fi
+
+          existing=$(gh issue list --search "in:title \"Spotify refresh token\" OR \"Spotify token health check\"" --state open --json title --jq '.[0].title // empty')
+
+          if [ -n "$existing" ]; then
+            echo "An open issue already exists ('$existing'), skipping creation."
+          else
+            gh issue create \
+              --title "$title" \
+              --body "The scheduled Spotify token health check reported a problem.
+
+          \`\`\`json
+          $BODY
+          \`\`\`
+
+          To re-authorize, follow the \"Re-authorizing\" section in README.md."
+          fi
+
+      - name: Fail job if not healthy
+        if: steps.health.outputs.status != 'ok'
+        run: |
+          echo "Token health status: ${{ steps.health.outputs.status }}"
+          exit 1

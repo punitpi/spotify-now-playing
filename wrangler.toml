@@ -4,3 +4,9 @@ compatibility_date = "2024-01-01"
 
 [observability]
 enabled = true
+
+[vars]
+# Date the current SPOTIFY_REFRESH_TOKEN was obtained (ISO format, YYYY-MM-DD).
+# Spotify refresh tokens expire 6 months after this date — update it every time
+# you re-authorize (see README.md "Re-authorizing" section).
+SPOTIFY_AUTHORIZED_AT = "2026-09-08"
