@@ -246,21 +246,59 @@ The service listens on `PORT` (default `3000`).
 
 ## Re-authorizing (every ~6 months)
 
-Spotify refresh tokens expire 6 months after the authorization moment (not reset by ongoing use). Since this app doesn't run any user-facing login flow of its own, re-authorization is a manual, ~5 minute procedure you repeat periodically:
+Spotify refresh tokens expire 6 months after the authorization moment (not reset by ongoing use). Since this app doesn't run any user-facing login flow of its own, re-authorization is a manual, ~5 minute procedure you repeat periodically. This deployment's actual values are filled in below — no substitution needed.
 
-1. **Redo Step 2 above** (Authorize your account → exchange the code for tokens) to get a brand-new `refresh_token`. The `redirect_uri` in both the authorize URL and the token exchange **must exactly match what's registered** in the Spotify Developer Dashboard for this app (Settings → Redirect URIs) — using a different value (even a reasonable-looking one) gets rejected with `INVALID_CLIENT: Invalid redirect URI`. Check the dashboard if you're not sure what's currently registered.
-2. **Update the Cloudflare secret**:
-   ```bash
-   npx wrangler secret put SPOTIFY_REFRESH_TOKEN
-   # paste the new refresh token when prompted
-   ```
-   (For Node/Docker/Vercel deployments, update `SPOTIFY_REFRESH_TOKEN` in `.env` or your host's environment variables instead.)
-3. **Update `SPOTIFY_AUTHORIZED_AT`** in `wrangler.toml` (`[vars]` section) to today's date — this resets the 6-month countdown used by the `/health` check.
-4. **Redeploy**:
-   ```bash
-   npm run deploy:cf
-   ```
-5. **Verify**: hit `/health` on your deployed URL and confirm `"status": "ok"` with a fresh `daysRemaining` (~180).
+**This app's registered values:**
+- Client ID: `f125f8626d094836a5f1f4099103776d`
+- Redirect URI: `https://api.puneeth.io/callback` (must match exactly what's registered in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard) → this app → Settings → Redirect URIs — a different value gets rejected with `INVALID_CLIENT: Invalid redirect URI`)
+
+### 1. Authorize
+
+Open this URL in your browser, log in with the Spotify account this service should track, and click **Agree**:
+
+```
+https://accounts.spotify.com/authorize?client_id=f125f8626d094836a5f1f4099103776d&response_type=code&redirect_uri=https%3A%2F%2Fapi.puneeth.io%2Fcallback&scope=user-read-currently-playing
+```
+
+You'll be redirected to `https://api.puneeth.io/callback?code=...` — nothing is listening there, so the page will likely show an error/404. That's expected. Copy the `code=` value out of the browser's address bar (it's long, ends before any `&` or the end of the URL).
+
+### 2. Exchange the code for a refresh token
+
+```bash
+curl -X POST https://accounts.spotify.com/api/token \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -u "f125f8626d094836a5f1f4099103776d:YOUR_CLIENT_SECRET" \
+  -d "grant_type=authorization_code&code=YOUR_CODE&redirect_uri=https://api.puneeth.io/callback"
+```
+
+Replace `YOUR_CLIENT_SECRET` (from the Spotify dashboard) and `YOUR_CODE` (from step 1 — it's single-use and expires in a few minutes, so run this promptly). Copy the `refresh_token` value from the JSON response.
+
+### 3. Update the Cloudflare secret
+
+```bash
+npx wrangler secret put SPOTIFY_REFRESH_TOKEN
+# paste the new refresh token when prompted
+```
+
+(For Node/Docker/Vercel deployments, update `SPOTIFY_REFRESH_TOKEN` in `.env` or your host's environment variables instead.)
+
+### 4. Update the authorization date
+
+Edit `SPOTIFY_AUTHORIZED_AT` in `wrangler.toml` (`[vars]` section) to today's date (`YYYY-MM-DD`) — this resets the 6-month countdown used by the `/health` check. Commit and push this change (or edit it directly if deploying manually).
+
+### 5. Redeploy
+
+```bash
+npm run deploy:cf
+```
+
+### 6. Verify
+
+```bash
+curl https://spotify.api.puneeth.io/health
+```
+
+Confirm `"status": "ok"` with a fresh `daysRemaining` (~180).
 
 You'll get a reminder before this is due — see below.
 
