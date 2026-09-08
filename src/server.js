@@ -6,7 +6,7 @@
  *   node src/server.js
  *
  * Required environment variables (set in .env or your host's config):
- *   SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN
+ *   SPOTIFY_CLIENT_ID, SPOTIFY_CLIENT_SECRET, SPOTIFY_REFRESH_TOKEN, SPOTIFY_AUTHORIZED_AT
  *
  * Optional:
  *   CORS_ORIGIN  – allowed origin, defaults to * (all origins)
@@ -22,6 +22,7 @@ const env = {
   SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID,
   SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET,
   SPOTIFY_REFRESH_TOKEN: process.env.SPOTIFY_REFRESH_TOKEN,
+  SPOTIFY_AUTHORIZED_AT: process.env.SPOTIFY_AUTHORIZED_AT,
   CORS_ORIGIN: process.env.CORS_ORIGIN,
 };
 
