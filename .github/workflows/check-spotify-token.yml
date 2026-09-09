@@ -26,7 +26,6 @@ jobs:
           echo "HTTP status: $http_code"
           echo "Body: $body"
 
-          echo "http_code=$http_code" >> "$GITHUB_OUTPUT"
           {
             echo "body<<HEALTH_BODY_EOF"
             echo "$body"
@@ -54,13 +53,14 @@ jobs:
             title="Spotify token health check failed (status: $STATUS)"
           fi
 
-          existing=$(gh issue list --search "in:title \"Spotify refresh token\" OR \"Spotify token health check\"" --state open --json title --jq '.[0].title // empty')
+          existing=$(gh issue list --label spotify-token-health --state open --json title --jq '.[0].title // empty')
 
           if [ -n "$existing" ]; then
             echo "An open issue already exists ('$existing'), skipping creation."
           else
             gh issue create \
               --title "$title" \
+              --label spotify-token-health \
               --body "The scheduled Spotify token health check reported a problem.
 
           \`\`\`json
