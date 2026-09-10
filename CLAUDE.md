@@ -2,6 +2,16 @@
 
 Cloudflare Worker proxying Spotify's "currently playing" API for a personal portfolio widget. Zero-dependency vanilla JS (`src/index.js`), no build step. `src/server.js` wraps the same handler for Node/Docker/Vercel.
 
+## Commands
+- `npm run dev:cf` — run locally against real Cloudflare secrets (`wrangler dev`, needs `wrangler login`)
+- `npm start` / `npm run dev` — run via the Node adapter (`src/server.js`), `--watch` for the latter
+- `npm run deploy:cf` — manual deploy (normally deploys via GitHub Actions instead, see below)
+- `node --check src/index.js` — syntax check, the only automated verification that exists
+
+## Routes
+- `/` — the now-playing widget. Origin-gated: rejects a mismatched `Origin`/`Referer` against `CORS_ORIGIN`, allows requests with neither header (no reliable way to distinguish curl from a legit caller with a stripped header).
+- `/health` — reports refresh-token status (`ok`/`expiring_soon`/`expired`/`error`) by actually calling Spotify's token endpoint. Cached 60s (not `no-store`) specifically to rate-limit that call. Not Origin-gated (polled by CI via curl, no browser Origin).
+
 ## Repo quirks
 - `node_modules/` is committed to git despite being gitignored (force-added historically) — don't be surprised by it, and don't try to "fix" this as a drive-by; it's out of scope unless asked.
 - The committed `node_modules/.bin/wrangler` sometimes lacks the executable bit or is built for the wrong platform (seen: Windows binaries on a macOS checkout). Fix locally with `chmod +x node_modules/.bin/wrangler`, or `rm -rf node_modules && npm install` for a full platform-correct reinstall — don't commit either fix, it's a local-checkout issue, not a repo one.
