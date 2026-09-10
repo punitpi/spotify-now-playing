@@ -357,7 +357,7 @@ Then poll it from client-side JavaScript every 30 seconds.
 
 ---
 
-## CORS
+## CORS and access control
 
 `CORS_ORIGIN` controls which origins can call the endpoint. Set it to your site's origin to lock it down:
 
@@ -366,3 +366,17 @@ CORS_ORIGIN=https://your-site.com
 ```
 
 Leave it unset to allow all origins (`*`), which is fine for private deploys.
+
+**This deployment** has `CORS_ORIGIN` set to `https://typedbyme.puneeth.io` (the portfolio site that uses this widget). Two layers of protection follow from that, both **best-effort, not real access control** — this is a static site (GitHub Pages) with no server-side secret store, so there's no way to do real authentication without adding a server-side proxy:
+
+1. **CORS (browser-enforced)**: blocks other sites' client-side JS from *reading* the response. Doesn't stop a direct `curl`/script call — CORS is a browser protection, not a server one.
+2. **Origin check (server-side, in `src/index.js`)**: the `/` route additionally rejects requests whose `Origin` or `Referer` header is *present and doesn't match* `CORS_ORIGIN` — blocking another site's browser-based caller. Requests with neither header (a bare `curl`, some browser privacy modes, redirects) are allowed through rather than guessed at, since there's no reliable way to tell "no header" apart from a legitimate caller that stripped it, and a false positive against real traffic is worse than the friction lost. A determined caller can still spoof both headers outright. Not applied to `/health`, which is polled by `curl` from GitHub Actions and has no browser `Origin` at all — it relies on the caching-based rate limit below instead.
+
+If `CORS_ORIGIN` is unset or `*`, this check is a no-op — everyone is allowed, same as before.
+
+## Abuse / rate-limit protection
+
+- **`/` (now-playing)**: cached for 30s at Cloudflare's edge, capping how often `getAccessToken` actually calls Spotify regardless of request volume.
+- **`/health`**: cached for 60s the same way, specifically so it can't be used to drive unlimited token-refresh calls against Spotify under this app's client credentials (it's only meant to be polled once a week by CI).
+- **Network-level DDoS**: any Cloudflare-proxied Worker already sits behind Cloudflare's automatic L3/L4/L7 DDoS mitigation — this is always-on and free, no configuration needed.
+- **Cloudflare Rate Limiting Rule**: for defense in depth on top of the caching above, add a [Rate Limiting Rule](https://developers.cloudflare.com/waf/rate-limiting-rules/) in the Cloudflare dashboard (Security → WAF → Rate limiting rules) scoped to this Worker's route — e.g. capping `/health` to a handful of requests per minute per IP. This has to be configured in the dashboard; it isn't expressible in `wrangler.toml`.
